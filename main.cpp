@@ -31,6 +31,8 @@ cv::Mat getTriangulationAffineEstimate(cv::Mat templateImage, cv::Mat image);
 
 inputType readInput(const char* filePath);
 
+std::vector<cv::Mat> buildOutput(float* parameterArray, std::size_t templateNum);
+
 extern "C" void inverseCompositional( float* imageArray
                                     , float* templateImageArray
                                     , float* affineParameterEstimates
@@ -114,7 +116,12 @@ int main( int argc, char** argv )
                         , input.maxIteration
                         );
                         
-    std::cout << "[ " << affineParameterEstimates[0] << ",\t" << affineParameterEstimates[1] << ",\t" << affineParameterEstimates[2] << ";" << std::endl << "  " << affineParameterEstimates[3] << ",\t" << affineParameterEstimates[4] << ",\t" << affineParameterEstimates[5] << ";" << std::endl << "  " << 0.0 << ",\t" << 0.0 << ",\t" << 1.0 << " ]" << std::endl;
+    std::vector<cv::Mat> output = buildOutput(affineParameterEstimates, templateNum);
+    
+    for(auto& m : output)
+    {
+        std::cout << m << std::endl << std::endl;
+    }
     
     delete[] imageArray;
     delete[] templateImageArray;
@@ -236,4 +243,18 @@ inputType readInput(const char* filePath)
     file.close();
     
     return input;
+}
+
+
+std::vector<cv::Mat> buildOutput(float* parameterArray, std::size_t templateNum)
+{
+    std::vector<cv::Mat> result;
+    result.reserve(templateNum);
+    
+    for(std::size_t i = 0; i < templateNum; ++i)
+    {
+        result.push_back((cv::Mat_<float>(2,3) << parameterArray[i * 6 + 0], parameterArray[i * 6 + 1], parameterArray[i * 6 + 2], parameterArray[i * 6 + 3], parameterArray[i * 6 + 4], parameterArray[i * 6 + 5]));
+    }
+    
+    return result;
 }
