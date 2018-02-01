@@ -93,7 +93,7 @@ void update_warp(float* W, float* idW)
     init_warp(W, newP);
 }
 
-float interpolate(float* image, std::size_t imageHeight, std::size_t imageWidth, float y, float x)
+__host__ __device__ float interpolate(float* image, std::size_t imageHeight, std::size_t imageWidth, float y, float x)
 {
   float xd, yd;  
   float k1 = modff(x,&xd);
@@ -104,8 +104,8 @@ float interpolate(float* image, std::size_t imageHeight, std::size_t imageWidth,
   int f1 = xi < imageHeight-1;  // Check that pixels to the right  
   int f2 = yi < imageWidth-1; // and to down direction exist.
 
-  float px1 = image[(yi  ) * imageWidth + xi];
-  float px2 = image[(yi  ) * imageWidth + xi+1];
+  float px1 = image[( yi ) * imageWidth + xi];
+  float px2 = image[( yi ) * imageWidth + xi+1];
   float px3 = image[(yi+1) * imageWidth + xi];
   float px4 = image[(yi+1) * imageWidth + xi+1];      
   
@@ -135,6 +135,103 @@ float norm(float* m, std::size_t rows, std::size_t cols)
     
     return sqrt(squareSum);
 }
+
+//gridDim.x = template image height
+//blockDim.x = template image width
+__global__ void getB(
+                      float* image,
+                      const unsigned int imageHeight,
+                      const unsigned int imageWidth,
+                      float* templateImage,
+                      float* steepestDescent,
+                      float* W,
+                      float* b
+                    )
+{
+    //int pixelId = blockIdx.x * blockDim.x + threadIdx.x;
+    int row = blockIdx.x;
+    int col = threadIdx.x;
+    
+    int templateImageWidth = blockDim.x;
+    
+	// Set vector X with pixel coordinates (x,y,1)
+    float X[3] = { static_cast<float>(col), static_cast<float>(row), 1.0f};
+
+	// Warp Z=W*X
+    float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
+                   W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
+                   W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
+                 };
+
+    // pixel coordinates in the coordinate frame of I.
+    float col2 = Z[0];
+    float row2 = Z[1];
+
+	// Get the nearest integer pixel coords (x2i;y2i).
+	int col2i = int(floor(col2));
+	int row2i = int(floor(row2));
+
+	if(col2i >= 0 && col2i < imageWidth && // check if pixel is inside I.
+		row2i >= 0 && row2i < imageHeight)
+	{
+		// Calculate intensity of a transformed pixel with sub-pixel accuracy
+		// using bilinear interpolation.
+		float I2 = interpolate(image, imageHeight, imageWidth, row2, col2);
+        
+		// Calculate image difference D = I(W(x,p))-T(x).
+		float D = I2 - templateImage[row * templateImageWidth + col];
+
+		// Add a term to b matrix.
+        
+        atomicAdd(&(b[0]), steepestDescent[6 * (row * templateImageWidth + col) + 0] * D);
+        atomicAdd(&(b[1]), steepestDescent[6 * (row * templateImageWidth + col) + 1] * D);
+        atomicAdd(&(b[2]), steepestDescent[6 * (row * templateImageWidth + col) + 2] * D);
+        atomicAdd(&(b[3]), steepestDescent[6 * (row * templateImageWidth + col) + 3] * D);
+        atomicAdd(&(b[4]), steepestDescent[6 * (row * templateImageWidth + col) + 4] * D);
+        atomicAdd(&(b[5]), steepestDescent[6 * (row * templateImageWidth + col) + 5] * D);
+	}
+}
+
+void displayAlignment(float* image, const std::size_t imageHeight, const std::size_t imageWidth, float* templateImage, const std::size_t templateImageHeight, const std::size_t templateImageWidth, float* W)
+{
+    cv::Mat imageMat = buildImageMat(image, imageHeight, imageWidth);
+    
+    for (int row = 0; row < templateImageHeight; ++row)
+	{
+		for (int col = 0; col < templateImageWidth; ++col)
+		{
+            float X[3] = { static_cast<float>(col), static_cast<float>(row), 1.0f};
+            
+            float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
+                           W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
+                           W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
+                         };
+            
+            float col2 = Z[0];
+            float row2 = Z[1];
+
+			int row2i = int(floor(row2));
+			int col2i = int(floor(col2));
+
+			if (row2i >= 0 && row2i < imageHeight && // check if pixel is inside I.
+				col2i >= 0 && col2i < imageWidth)
+			{
+                float I2 = interpolate(image, imageHeight, imageWidth, row2, col2);
+
+				imageMat.at<float>(row2i, col2i) = templateImage[row * templateImageWidth + col];
+                
+				if (row == 0 || col == 0 || col == templateImageWidth - 1 || row == templateImageHeight - 1)
+				{
+					imageMat.at<float>(row2i, col2i) = 1.0f;
+				}
+			}
+		}
+	}
+    
+	cv::imshow("Result", imageMat);
+	cv::waitKey(0);
+}
+
 
 extern "C"
 void inverseCompositional( float* imageArray
@@ -170,7 +267,7 @@ void inverseCompositional( float* imageArray
 	template_gradient_row = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
 	template_gradient_col = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
     
-    float* steepest_descent = new float[6 * templateImageHeight * templateImageWidth];
+    float* steepestDescent = new float[6 * templateImageHeight * templateImageWidth];
 
 	//The "magic number" appearing at the end in the following is simply the inverse 
 	//of the absolute sum of the weights in the matrix representing the Scharr filter.
@@ -189,19 +286,19 @@ void inverseCompositional( float* imageArray
 			float Ty = template_gradient_row.at<float>(row, col);	
 			
 			// Calculate steepest descent image's element.
-            steepest_descent[6 * (row * templateImageWidth + col) + 0] = Tx * col;
-            steepest_descent[6 * (row * templateImageWidth + col) + 1] = Ty * col;
-            steepest_descent[6 * (row * templateImageWidth + col) + 2] = Tx * row;
-            steepest_descent[6 * (row * templateImageWidth + col) + 3] = Ty * row;
-            steepest_descent[6 * (row * templateImageWidth + col) + 4] = Tx;
-            steepest_descent[6 * (row * templateImageWidth + col) + 5] = Ty;
+            steepestDescent[6 * (row * templateImageWidth + col) + 0] = Tx * col;
+            steepestDescent[6 * (row * templateImageWidth + col) + 1] = Ty * col;
+            steepestDescent[6 * (row * templateImageWidth + col) + 2] = Tx * row;
+            steepestDescent[6 * (row * templateImageWidth + col) + 3] = Ty * row;
+            steepestDescent[6 * (row * templateImageWidth + col) + 4] = Tx;
+            steepestDescent[6 * (row * templateImageWidth + col) + 5] = Ty;
             
 			// Add a term to Hessian.
 			for(int i = 0; i < 6; ++i)
 			{
 				for(int j = 0; j < 6; ++j)
 				{
-                    H.at<float>(i, j) += steepest_descent[6 * (row * templateImageWidth + col) + i] * steepest_descent[6 * (row * templateImageWidth + col) + j];
+                    H.at<float>(i, j) += steepestDescent[6 * (row * templateImageWidth + col) + i] * steepestDescent[6 * (row * templateImageWidth + col) + j];
 				}
 			}
 		}
@@ -214,86 +311,49 @@ void inverseCompositional( float* imageArray
 	 *   Iteration stage.
 	 */
      
-    buildTransformationFromInput(W, affineParameterEstimates);
+    buildTransformationFromInput(W, affineParameterEstimates);    
     
-	// Here we will store current value of mean error.
-	float mean_error=0;
+    // copy images, estimate to gpu memory
+    std::size_t imageArraySize = imageWidth * imageHeight * sizeof(float);
+    std::size_t templateImageArraySize = templateImageWidth * templateImageHeight * sizeof(float);
+    std::size_t steepestDescentArraySize = 6 * templateImageWidth * templateImageHeight * sizeof(float);
+    std::size_t wArraySize = 3 * 3 * sizeof(float);
+    std::size_t bArraySize = 6 * 1 * sizeof(float);
+  
+    float* gpuImage = NULL;
+    cudaMalloc((void **)&gpuImage, imageArraySize);
+    float* gpuTemplateImage = NULL;
+    cudaMalloc((void **)&gpuTemplateImage, templateImageArraySize);
+    float* gpuSteepestDescentImage = NULL;
+    cudaMalloc((void **)&gpuSteepestDescentImage, steepestDescentArraySize);
+    float* gpuW = NULL;
+    cudaMalloc((void **)&gpuW, wArraySize);
+    float* gpuB = NULL;
+    cudaMalloc((void **)&gpuB, bArraySize);
+    
+    cudaMemcpy(gpuImage, imageArray, imageArraySize, cudaMemcpyHostToDevice);
+    cudaMemcpy(gpuTemplateImage, templateImageArray, templateImageArraySize, cudaMemcpyHostToDevice);
+    cudaMemcpy(gpuSteepestDescentImage, steepestDescent, steepestDescentArraySize, cudaMemcpyHostToDevice);
 
 	// Iterate
 	int iter=0; // number of current iteration
     while(iter < maxIteration)
 	{
-		++iter; // Increment iteration counter
-
-        image.copyTo(debug);
+		++iter; // Increment iteration counter		
         
-		mean_error = 0; // Set mean error value with zero
-
-		int pixel_count = 0; // Count of processed pixels
-		
+        cudaMemcpy(gpuW, W, wArraySize, cudaMemcpyHostToDevice);
+        
         for(int i = 0; i < 6; ++i)
         {
             b[i] = 0.0f;
         }
+        
+        cudaMemcpy(gpuB, b, bArraySize, cudaMemcpyHostToDevice);
 			
-		// Walk through pixels in the template T.
-		for(int col = 0; col < templateImageWidth; ++col)
-		{
-			for(int row = 0; row < templateImageHeight; ++row)
-			{
-				// Set vector X with pixel coordinates (x,y,1)
-                float X[3] = { static_cast<float>(col), static_cast<float>(row), 1.0f};
+        getB<<<templateImageHeight, templateImageWidth>>>(gpuImage, imageHeight, imageWidth, gpuTemplateImage, gpuSteepestDescentImage, gpuW, gpuB);
 
-				// Warp Z=W*X
-                float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
-                               W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
-                               W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
-                             };
-
-                // pixel coordinates in the coordinate frame of I.
-                float col2 = Z[0];
-                float row2 = Z[1];
-
-				// Get the nearest integer pixel coords (x2i;y2i).
-				int col2i = int(floor(col2));
-				int row2i = int(floor(row2));
-
-				if(col2i >= 0 && col2i < imageWidth && // check if pixel is inside I.
-					row2i >= 0 && row2i < imageHeight)
-				{
-					++pixel_count;
-
-					// Calculate intensity of a transformed pixel with sub-pixel accuracy
-					// using bilinear interpolation.
-					float I2 = interpolate(imageArray, imageHeight, imageWidth, row2, col2);
-                    
-                    debug.at<float>(row2i, col2i) = templateImageMat.at<float>(row,col);
-                    if(row == 0 || col == 0 || col == templateImageMat.cols-1 || row == templateImageMat.rows-1)
-                    {
-                        debug.at<float>(row2i,col2i) = 1.0;
-                    }
-
-					// Calculate image difference D = I(W(x,p))-T(x).
-					float D = I2 - templateImageMat.at<float>(row, col);
-
-					// Update mean error value.
-					mean_error += fabs(D);
-
-					// Add a term to b matrix.
-					b[0] += steepest_descent[6 * (row * templateImageWidth + col) + 0] * D;
-					b[1] += steepest_descent[6 * (row * templateImageWidth + col) + 1] * D;
-					b[2] += steepest_descent[6 * (row * templateImageWidth + col) + 2] * D;	
-					b[3] += steepest_descent[6 * (row * templateImageWidth + col) + 3] * D;	
-					b[4] += steepest_descent[6 * (row * templateImageWidth + col) + 4] * D;	
-					b[5] += steepest_descent[6 * (row * templateImageWidth + col) + 5] * D;					
-				}
-			}
-		}
-
-		// Finally, calculate resulting mean error.
-		if(pixel_count!=0)
-			mean_error /= pixel_count;
-
+        cudaMemcpy(b, gpuB, bArraySize, cudaMemcpyDeviceToHost);
+        
 		// Find parameter increment.
         //delta_p = iH * b;
         for(int row = 0; row < 6; ++row)
@@ -312,22 +372,25 @@ void inverseCompositional( float* imageArray
         
         //W o idW;
 		update_warp(W, idW);
-		// Print diagnostic information to screen.
-		printf("iter=%d mean_error=%f\n", iter, mean_error);
-        
-        cv::imshow("Debug", debug);
-        cv::waitKey(24);
 
 		// Check termination critera.
 		if(norm(delta_p, 6, 1) <= epsilon) break;
 	}
     
-    std::cout << std::endl << "[ " << W[0] << ",\t" << W[1] << ",\t" << W[2] << ";" << std::endl << "  " << W[3] << ",\t" << W[4] << ",\t" << W[5] << ";" << std::endl << " " << W[6] << ",\t" << W[7] << ",\t" << W[8] << " ]" << std::endl;
+    std::cout << "Finished in " << iter << " iterations." << std::endl << std::endl;
     
-    cv::imshow("Debug", debug);
-    cv::waitKey(0);
+    std::cout << "[ " << W[0] << ",\t" << W[1] << ",\t" << W[2] << ";" << std::endl << "  " << W[3] << ",\t" << W[4] << ",\t" << W[5] << ";" << std::endl << " " << W[6] << ",\t" << W[7] << ",\t" << W[8] << " ]" << std::endl;
+    
+    displayAlignment(imageArray, imageHeight, imageWidth, templateImageArray, templateImageHeight, templateImageWidth, W);
     
     delete[] W;
     delete[] dW;
     delete[] idW;
+    
+    
+    cudaFree(gpuB);
+    cudaFree(gpuW);
+    cudaFree(gpuImage);
+    cudaFree(gpuSteepestDescentImage);
+    cudaFree(gpuTemplateImage);
 }
