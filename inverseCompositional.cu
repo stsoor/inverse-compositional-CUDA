@@ -25,10 +25,10 @@ cv::Mat buildImageMat(float* intensityArray, const std::size_t height, const std
 void buildTransformationFromInput(float* W, float* p)
 {
     W[0 * 3 + 0] = p[0];
-    W[0 * 3 + 1] = p[2];
-    W[0 * 3 + 2] = p[4];
-    W[1 * 3 + 0] = p[1];
-    W[1 * 3 + 1] = p[3];
+    W[0 * 3 + 1] = p[1];
+    W[0 * 3 + 2] = p[2];
+    W[1 * 3 + 0] = p[3];
+    W[1 * 3 + 1] = p[4];
     W[1 * 3 + 2] = p[5];
     W[2 * 3 + 0] = 0.0f;
     W[2 * 3 + 1] = 0.0f;
@@ -345,7 +345,7 @@ void inverseCompositional( float* imageArray
 	 *   Iteration stage.
 	 */
      
-    buildTransformationFromInput(W, affineParameterEstimates);    
+    buildTransformationFromInput(W, affineParameterEstimates);
     
     // copy images, estimate to gpu memory
     std::size_t imageArraySize = imageWidth * imageHeight * sizeof(float);

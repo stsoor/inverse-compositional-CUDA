@@ -98,7 +98,7 @@ Mat getAffineTransformation(Mat image, Mat transformedImage, AffineEstimator typ
     else if(AffineEstimator::LEAST_SQUARES == type)
     {
         Mat affineEstimation = leastSquaresAffineEstimation(originalPoints, transformedPoints);
-        affineEstimation.convertTo(affineEstimation, CV_64FC1);
+        affineEstimation.convertTo(affineEstimation, CV_64FC1); // to provide a uniform interface with the cv::getAffineTransform
         return affineEstimation;
     }
     else
