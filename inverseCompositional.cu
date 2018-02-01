@@ -25,72 +25,75 @@ cv::Mat buildImageMat(float* intensityArray, const std::size_t height, const std
     return image;
 }
 
-void buildTransformationFromInput(cv::Mat& W, float* p)
+void buildTransformationFromInput(float* W, float* p)
 {
-    W.at<float>(0,0) = p[0];
-    W.at<float>(0,1) = p[2];
-    W.at<float>(0,2) = p[4];
-    W.at<float>(1,0) = p[1];
-    W.at<float>(1,1) = p[3];
-    W.at<float>(1,2) = p[5];
-    W.at<float>(2,0) = 0.0f;
-    W.at<float>(2,1) = 0.0f;
-    W.at<float>(2,2) = 1.0f;
+    W[0 * 3 + 0] = p[0];
+    W[0 * 3 + 1] = p[2];
+    W[0 * 3 + 2] = p[4];
+    W[1 * 3 + 0] = p[1];
+    W[1 * 3 + 1] = p[3];
+    W[1 * 3 + 2] = p[5];
+    W[2 * 3 + 0] = 0.0f;
+    W[2 * 3 + 1] = 0.0f;
+    W[2 * 3 + 2] = 1.0f;
 }
 
-void init_warp(cv::Mat& W, cv::Mat p)
+void init_warp(float* W, float* p)
 {
-	W.at<float>(0, 0) = 1.0 + p.at<float>(0,0);
-	W.at<float>(0, 1) = p.at<float>(2,0);
-	W.at<float>(0, 2) = p.at<float>(4,0);
+	W[0 * 3 + 0] = 1.0 + p[0];
+	W[0 * 3 + 1] = p[2];
+	W[0 * 3 + 2] = p[4];
     
-	W.at<float>(1, 0) = p.at<float>(1,0);
-	W.at<float>(1, 1) = 1.0 + p.at<float>(3,0);
-	W.at<float>(1, 2) = p.at<float>(5,0);
+	W[1 * 3 + 0] = p[1];
+	W[1 * 3 + 1] = 1.0 + p[3];
+	W[1 * 3 + 2] = p[5];
     
-	W.at<float>(2, 0) = 0.0;
-	W.at<float>(2, 1) = 0.0;
-	W.at<float>(2, 2) = 1.0;
+	W[2 * 3 + 0] = 0.0;
+	W[2 * 3 + 1] = 0.0;
+	W[2 * 3 + 2] = 1.0;
 }
 
-cv::Mat getWarpInvert(cv::Mat W)
+void getWarpInvert(float* W, float* out)
 {
-    float p1 = W.at<float>(0,0) - 1.0;
-    float p2 = W.at<float>(1,0);
-    float p3 = W.at<float>(0,1);
-    float p4 = W.at<float>(1,1) - 1.0;
-    float p5 = W.at<float>(0,2);
-    float p6 = W.at<float>(1,2);
+    float p1 = W[0 * 3 + 0] - 1.0;
+    float p2 = W[1 * 3 + 0];
+    float p3 = W[0 * 3 + 1];
+    float p4 = W[1 * 3 + 1] - 1.0;
+    float p5 = W[0 * 3 + 2];
+    float p6 = W[1 * 3 + 2];
     
     float det = (1 + p1) * (1 + p4) - p2 * p3;
     
-    cv::Mat invW = (cv::Mat_<float>(3,3) <<
-                                            1.0 + (-p1 - p1 * p4 + p2 * p3) / det, (-p3) / det, (-p5 - p4 * p5 + p3 * p6) / det,
-                                            (-p2) / det, 1.0 + (-p4 - p1 * p4 + p2 * p3) / det, (-p6 - p1 * p6 + p2 * p5) / det,
-                                            0.0, 0.0, 1.0
-                   );
-    
-    return invW;
+    out[0 * 3 + 0] = 1.0 + (-p1 - p1 * p4 + p2 * p3) / det;
+    out[0 * 3 + 1] = (-p3) / det;
+    out[0 * 3 + 2] = (-p5 - p4 * p5 + p3 * p6) / det;
+    out[1 * 3 + 0] = (-p2) / det;
+    out[1 * 3 + 1] = 1.0 + (-p4 - p1 * p4 + p2 * p3) / det;
+    out[1 * 3 + 2] = (-p6 - p1 * p6 + p2 * p5) / det;
+    out[2 * 3 + 0] = 0.0;
+    out[2 * 3 + 1] = 0.0;
+    out[2 * 3 + 2] = 1.0;
 }
 
-void update_warp(cv::Mat& W, cv::Mat idW)
+void update_warp(float* W, float* idW)
 {
-    cv::Mat p =  (cv::Mat_<float>(6,1) <<   W.at<float>(0,0) - 1.0,   W.at<float>(1,0),   W.at<float>(0,1),   W.at<float>(1,1) - 1.0,   W.at<float>(0,2),   W.at<float>(1,2) );
-    cv::Mat dp = (cv::Mat_<float>(6,1) << idW.at<float>(0,0) - 1.0, idW.at<float>(1,0), idW.at<float>(0,1), idW.at<float>(1,1) - 1.0, idW.at<float>(0,2), idW.at<float>(1,2) );
+    float  p[6] = {  W[0 * 3 + 0] - 1.0f,   W[1 * 3 + 0],   W[0 * 3 + 1],    W[1 * 3 + 1] - 1.0f,   W[0 * 3 + 2],   W[1 * 3 + 2]};
+    float dp[6] = {idW[0 * 3 + 0] - 1.0f, idW[1 * 3 + 0], idW[0 * 3 + 1],  idW[1 * 3 + 1] - 1.0f, idW[0 * 3 + 2], idW[1 * 3 + 2]};
         
-    cv::Mat_<float>newP(6,1);
-    
-    newP.at<float>(0,0) = p.at<float>(0,0) + dp.at<float>(0,0) + p.at<float>(0,0) * dp.at<float>(0,0) + p.at<float>(2,0) * dp.at<float>(1,0);
-    newP.at<float>(1,0) = p.at<float>(1,0) + dp.at<float>(1,0) + p.at<float>(1,0) * dp.at<float>(0,0) + p.at<float>(3,0) * dp.at<float>(1,0);
-    newP.at<float>(2,0) = p.at<float>(2,0) + dp.at<float>(2,0) + p.at<float>(0,0) * dp.at<float>(2,0) + p.at<float>(2,0) * dp.at<float>(3,0);
-    newP.at<float>(3,0) = p.at<float>(3,0) + dp.at<float>(3,0) + p.at<float>(1,0) * dp.at<float>(2,0) + p.at<float>(3,0) * dp.at<float>(3,0);
-    newP.at<float>(4,0) = p.at<float>(4,0) + dp.at<float>(4,0) + p.at<float>(0,0) * dp.at<float>(4,0) + p.at<float>(2,0) * dp.at<float>(5,0);
-    newP.at<float>(5,0) = p.at<float>(5,0) + dp.at<float>(5,0) + p.at<float>(1,0) * dp.at<float>(4,0) + p.at<float>(3,0) * dp.at<float>(5,0);
+        
+    float newP[6] = {
+        p[0] + dp[0] + p[0] * dp[0] + p[2] * dp[1],
+        p[1] + dp[1] + p[1] * dp[0] + p[3] * dp[1],
+        p[2] + dp[2] + p[0] * dp[2] + p[2] * dp[3],
+        p[3] + dp[3] + p[1] * dp[2] + p[3] * dp[3],
+        p[4] + dp[4] + p[0] * dp[4] + p[2] * dp[5],
+        p[5] + dp[5] + p[1] * dp[4] + p[3] * dp[5]
+    };
     
     init_warp(W, newP);
 }
 
-float interpolate(cv::Mat& image, float y, float x)
+float interpolate(float* image, std::size_t imageHeight, std::size_t imageWidth, float y, float x)
 {
   float xd, yd;  
   float k1 = modff(x,&xd);
@@ -98,13 +101,13 @@ float interpolate(cv::Mat& image, float y, float x)
   int xi = int(xd);
   int yi = int(yd);
 
-  int f1 = xi < image.rows-1;  // Check that pixels to the right  
-  int f2 = yi < image.cols-1; // and to down direction exist.
+  int f1 = xi < imageHeight-1;  // Check that pixels to the right  
+  int f2 = yi < imageWidth-1; // and to down direction exist.
 
-  float px1 = image.at<float>(yi  , xi);
-  float px2 = image.at<float>(yi  , xi+1);
-  float px3 = image.at<float>(yi+1, xi);
-  float px4 = image.at<float>(yi+1, xi+1);      
+  float px1 = image[(yi  ) * imageWidth + xi];
+  float px2 = image[(yi  ) * imageWidth + xi+1];
+  float px3 = image[(yi+1) * imageWidth + xi];
+  float px4 = image[(yi+1) * imageWidth + xi+1];      
   
   // Interpolate pixel intensity.
   float interpolated_value = 
@@ -116,15 +119,15 @@ float interpolate(cv::Mat& image, float y, float x)
   return interpolated_value;
 }
 
-float norm(cv::Mat m)
+float norm(float* m, std::size_t rows, std::size_t cols)
 {
     float squareSum = 0.0f;
     
-    for(std::size_t row = 0; row < m.rows; ++row)
+    for(std::size_t row = 0; row < rows; ++row)
     {
-        for(std::size_t col = 0; col < m.cols; ++col)
+        for(std::size_t col = 0; col < cols; ++col)
         {
-            float elem = m.at<float>(static_cast<int>(row), static_cast<int>(col));
+            float elem = m[row * cols + col];
             
             squareSum += elem * elem;
         }
@@ -145,25 +148,23 @@ void inverseCompositional( float* imageArray
                          , const int maxIteration
                          )
 {
-    cv::Mat target = buildImageMat(imageArray, imageHeight, imageWidth);
+    cv::Mat image = buildImageMat(imageArray, imageHeight, imageWidth);
     cv::Mat templateImageMat = buildImageMat(templateImageArray, templateImageHeight, templateImageWidth);
     
 	// Find the 2-D similarity transform that best aligns the two images (uniform scale, rotation and translation)
 	cv::Mat debug;
 
-	cv::Mat template_gradient_row;    // Gradient of I in X direction.
-	cv::Mat template_gradient_col;    // Gradient of I in Y direction.
+	cv::Mat template_gradient_row;   // Gradient of I in X direction.
+	cv::Mat template_gradient_col;   // Gradient of I in Y direction.
 
 									// Here we will store matrices.
-	cv::Mat_<float> W(3,3);         // Current value of warp W(x,p)
-	cv::Mat_<float> dW(3,3);        // Warp update.
-	cv::Mat_<float> idW(3,3);       // Warp update.
-	cv::Mat_<float> X(3,1);         // Point in coordinate frame of template.
-	cv::Mat_<float> Z(3,1);         // Point in coordinate frame of image.
+	float*   W = new float[3 * 3];  // Current value of warp W(x,p)
+	float*  dW = new float[3 * 3];  // Warp update.
+	float* idW = new float[3 * 3];  // Warp update.
 
-	cv::Mat_<float> H(6,6);         // Approximate Hessian.
-	cv::Mat_<float> b(6,1);         // Vector in the right side of the system of linear equations.
-	cv::Mat_<float> delta_p(6,1);   // Parameter update value.
+	cv::Mat_<float> H(6,6);         // Approximate Hessian. - has to be inverted online
+	float b[6];                     // Vector in the right side of the system of linear equations.
+	float delta_p[6];               // Parameter update value.
 
 							  // Create images.
 	template_gradient_row = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
@@ -214,7 +215,7 @@ void inverseCompositional( float* imageArray
 	 */
      
     buildTransformationFromInput(W, affineParameterEstimates);
-
+    
 	// Here we will store current value of mean error.
 	float mean_error=0;
 
@@ -224,13 +225,16 @@ void inverseCompositional( float* imageArray
 	{
 		++iter; // Increment iteration counter
 
-        target.copyTo(debug);
+        image.copyTo(debug);
         
 		mean_error = 0; // Set mean error value with zero
 
 		int pixel_count = 0; // Count of processed pixels
 		
-		b = cv::Mat::zeros(6, 1, CV_32FC1); // Set b matrix with zeroes
+        for(int i = 0; i < 6; ++i)
+        {
+            b[i] = 0.0f;
+        }
 			
 		// Walk through pixels in the template T.
 		for(int col = 0; col < templateImageWidth; ++col)
@@ -238,15 +242,17 @@ void inverseCompositional( float* imageArray
 			for(int row = 0; row < templateImageHeight; ++row)
 			{
 				// Set vector X with pixel coordinates (x,y,1)
-                X = (cv::Mat_<float>(3,1) << col, row, 1);
+                float X[3] = { static_cast<float>(col), static_cast<float>(row), 1.0f};
 
 				// Warp Z=W*X
-                Z = W * X;
+                float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
+                               W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
+                               W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
+                             };
 
-				// Get coordinates of warped pixel in coordinate frame of I.
-                float col2, row2; // pixel coordinates in the coordinate frame of I.
-                col2 = Z.at<float>(0,0);
-                row2 = Z.at<float>(1,0);
+                // pixel coordinates in the coordinate frame of I.
+                float col2 = Z[0];
+                float row2 = Z[1];
 
 				// Get the nearest integer pixel coords (x2i;y2i).
 				int col2i = int(floor(col2));
@@ -259,7 +265,7 @@ void inverseCompositional( float* imageArray
 
 					// Calculate intensity of a transformed pixel with sub-pixel accuracy
 					// using bilinear interpolation.
-					float I2 = interpolate(target, row2, col2);
+					float I2 = interpolate(imageArray, imageHeight, imageWidth, row2, col2);
                     
                     debug.at<float>(row2i, col2i) = templateImageMat.at<float>(row,col);
                     if(row == 0 || col == 0 || col == templateImageMat.cols-1 || row == templateImageMat.rows-1)
@@ -274,12 +280,12 @@ void inverseCompositional( float* imageArray
 					mean_error += fabs(D);
 
 					// Add a term to b matrix.
-					b.at<float>(0,0) += steepest_descent[6 * (row * templateImageWidth + col) + 0] * D;
-					b.at<float>(1,0) += steepest_descent[6 * (row * templateImageWidth + col) + 1] * D;
-					b.at<float>(2,0) += steepest_descent[6 * (row * templateImageWidth + col) + 2] * D;	
-					b.at<float>(3,0) += steepest_descent[6 * (row * templateImageWidth + col) + 3] * D;	
-					b.at<float>(4,0) += steepest_descent[6 * (row * templateImageWidth + col) + 4] * D;	
-					b.at<float>(5,0) += steepest_descent[6 * (row * templateImageWidth + col) + 5] * D;					
+					b[0] += steepest_descent[6 * (row * templateImageWidth + col) + 0] * D;
+					b[1] += steepest_descent[6 * (row * templateImageWidth + col) + 1] * D;
+					b[2] += steepest_descent[6 * (row * templateImageWidth + col) + 2] * D;	
+					b[3] += steepest_descent[6 * (row * templateImageWidth + col) + 3] * D;	
+					b[4] += steepest_descent[6 * (row * templateImageWidth + col) + 4] * D;	
+					b[5] += steepest_descent[6 * (row * templateImageWidth + col) + 5] * D;					
 				}
 			}
 		}
@@ -289,12 +295,20 @@ void inverseCompositional( float* imageArray
 			mean_error /= pixel_count;
 
 		// Find parameter increment.
-        delta_p = iH * b;
+        //delta_p = iH * b;
+        for(int row = 0; row < 6; ++row)
+        {
+            delta_p[row] = 0.0f;
+            for(int col = 0; col < 6; ++col)
+            {
+                delta_p[row] += iH.at<float>(row,col) * b[col];
+            }
+        }
 
 		init_warp(dW, delta_p);
         
 		// Invert warp.
-		idW = getWarpInvert(dW);
+		getWarpInvert(dW, idW);
         
         //W o idW;
 		update_warp(W, idW);
@@ -305,11 +319,15 @@ void inverseCompositional( float* imageArray
         cv::waitKey(24);
 
 		// Check termination critera.
-		if(norm(delta_p) <= epsilon) break;
+		if(norm(delta_p, 6, 1) <= epsilon) break;
 	}
     
-    std::cout << W << std::endl;
+    std::cout << std::endl << "[ " << W[0] << ",\t" << W[1] << ",\t" << W[2] << ";" << std::endl << "  " << W[3] << ",\t" << W[4] << ",\t" << W[5] << ";" << std::endl << " " << W[6] << ",\t" << W[7] << ",\t" << W[8] << " ]" << std::endl;
     
     cv::imshow("Debug", debug);
     cv::waitKey(0);
+    
+    delete[] W;
+    delete[] dW;
+    delete[] idW;
 }
