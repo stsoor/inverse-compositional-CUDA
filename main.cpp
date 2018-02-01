@@ -1,6 +1,5 @@
-//cl /EHsc /W4 /Fealign.exe getAffine.cpp main.cpp /I "C:\Libs\OpenCV\OpenCV3.3.0\include" /link /LIBPATH:"C:\Libs\OpenCV\OpenCV3.3.0\x64\vc15\lib\" opencv_world330.lib
-
 #include "getAffine.h"
+#include "types.h"
 
 #include <iostream>
 #include <opencv2/opencv.hpp>
@@ -37,8 +36,8 @@ extern "C" void inverseCompositional( float* imageArray
                                     , float* affineParameterEstimates
                                     , const std::size_t imageHeight
                                     , const std::size_t imageWidth
-                                    , const std::size_t templateImageHeight
-                                    , const std::size_t templateImageWidth
+                                    , dimensions* dimensionsArray
+                                    , const std::size_t templateNum
                                     , const float epsilon
                                     , const int maxIteration
                                     );
@@ -51,13 +50,19 @@ int main( int argc, char** argv )
     }
     
     inputType input = readInput(argv[1]);
-    std::cout << argv[1] << std::endl;
     
-    //if(image.type() != CV_8UC1 || templateImage.type() != CV_8UC1) -> we could throw an error if we would only implement for 8bit images
+    std::size_t templateNum = input.templates.size();
+    
+    std::size_t templateSizeSum = 0;
+    for(auto& t : input.templates)
+    {
+        templateSizeSum += t.rows * t.cols;
+    }
     
     float* imageArray = new float[input.image.rows * input.image.cols];
-    float* templateImageArray = new float[input.templates[0].rows * input.templates[0].cols];
-    float* affineParameterEstimates = new float[2 * 3];
+    float* templateImageArray = new float[templateSizeSum];
+    float* affineParameterEstimates = new float[2 * 3 * templateNum];
+    dimensions* dimensionsArray = new dimensions[templateNum];
     
     for(int y = 0; y < input.image.rows; ++y)
     {
@@ -66,20 +71,33 @@ int main( int argc, char** argv )
             imageArray[y * input.image.cols + x] = input.image.at<unsigned char>(y, x) / 255.0f;
         }
     }
-    for(int y = 0; y < input.templates[0].rows; ++y)
+    
+    std::size_t globalPosition = 0;
+    for(int i = 0; i < templateNum; ++i)
     {
-        for(int x = 0; x < input.templates[0].cols; ++x)
+        dimensionsArray[i].id = i;
+        dimensionsArray[i].position = globalPosition;
+        dimensionsArray[i].rows = input.templates[i].rows;
+        dimensionsArray[i].cols = input.templates[i].cols;
+        
+        for(int y = 0; y < input.templates[i].rows; ++y)
         {
-            templateImageArray[y * input.templates[0].cols + x] = input.templates[0].at<unsigned char>(y, x) / 255.0f;
+            for(int x = 0; x < input.templates[i].cols; ++x)
+            {
+                templateImageArray[globalPosition++] = input.templates[i].at<unsigned char>(y, x) / 255.0f;
+            }
         }
     }
     
-    
-      for(int y = 0; y < input.affineEstimates[0].rows; ++y)
+    globalPosition = 0;
+    for(int i = 0; i < templateNum; ++i)
     {
-        for(int x = 0; x < input.affineEstimates[0].cols; ++x)
+        for(int y = 0; y < input.affineEstimates[i].rows; ++y)
         {
-            affineParameterEstimates[y * 3 + x] = static_cast<float>(input.affineEstimates[0].at<double>(y, x));
+            for(int x = 0; x < input.affineEstimates[i].cols; ++x)
+            {
+                affineParameterEstimates[globalPosition++] = static_cast<float>(input.affineEstimates[i].at<double>(y, x));
+            }
         }
     }
     
@@ -90,8 +108,8 @@ int main( int argc, char** argv )
                         , affineParameterEstimates
                         , input.image.rows
                         , input.image.cols
-                        , input.templates[0].rows
-                        , input.templates[0].cols
+                        , dimensionsArray
+                        , templateNum
                         , input.epsilon
                         , input.maxIteration
                         );
@@ -99,7 +117,7 @@ int main( int argc, char** argv )
     delete[] imageArray;
     delete[] templateImageArray;
     delete[] affineParameterEstimates;
-    
+    delete[] dimensionsArray;
 
     return 0;
 }
@@ -122,12 +140,15 @@ bool validateInput(int argc)
 
 cv::Mat readImage(const char* filePath)
 {
-    cv::Mat image = cv::imread( filePath, CV_LOAD_IMAGE_GRAYSCALE ); //TODO CV_LOAD_IMAGE_ANYDEPTH és convertTo float
+    cv::Mat image = cv::imread( filePath, CV_LOAD_IMAGE_GRAYSCALE | CV_LOAD_IMAGE_ANYDEPTH);
     
     if( !image.data )
     {
         throw std::ios_base::failure("Runtime error during reading in the initial image");
     }
+    
+    image.convertTo(image, CV_8UC1); // 8UC1 is needed for SIFT detection / parameter estimation and a uniform container is needed for later conversions
+    
     return image;
 }
 
@@ -150,20 +171,16 @@ inputType readInput(const char* filePath)
     
     int templateNum;
     file >> templateNum;
-    std::cout << templateNum << std::endl;
     
     input.templates.reserve(templateNum);
     input.affineEstimates.reserve(templateNum);
     
     file >> input.epsilon;
     file >> input.maxIteration;
-    std::cout << input.epsilon << std::endl;
-    std::cout << input.maxIteration << std::endl;
     
     file.get(); //next char is a space
     std::string imageFilePath;
     getline(file, imageFilePath);
-    std::cout << imageFilePath << std::endl;
     
     input.image = readImage(imageFilePath.c_str());
     
@@ -171,18 +188,15 @@ inputType readInput(const char* filePath)
     {
         int mode;
         file >> mode;
-    std::cout << mode << std::endl;
         
         if(1 == mode)
         {
             std::size_t estimationMatchNum;
             file >> estimationMatchNum;
-    std::cout << estimationMatchNum << std::endl;
             
             file.get(); //next char is a space
             getline(file, imageFilePath);
             input.templates.push_back(readImage(imageFilePath.c_str()));
-    std::cout << imageFilePath << std::endl;
             
             input.affineEstimates.push_back(getRegressionAffineEstimate(input.templates.back(), input.image, estimationMatchNum));
         }

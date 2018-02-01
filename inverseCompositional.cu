@@ -6,6 +6,8 @@
 
 #include <vector>
 
+#include "types.h"
+
 
 cv::Mat buildImageMat(float* intensityArray, const std::size_t height, const std::size_t width)
 {
@@ -266,12 +268,15 @@ void inverseCompositional( float* imageArray
                          , float* affineParameterEstimates
                          , const std::size_t imageHeight
                          , const std::size_t imageWidth
-                         , const std::size_t templateImageHeight
-                         , const std::size_t templateImageWidth
+                         , dimensions* dimensionsArray
+                         , const std::size_t templateNum
                          , const float epsilon
                          , const int maxIteration
                          )
 {
+    std::size_t templateImageHeight = dimensionsArray[0].rows;
+    std::size_t templateImageWidth = dimensionsArray[0].cols;
+    
     cv::Mat image = buildImageMat(imageArray, imageHeight, imageWidth);
     cv::Mat templateImageMat = buildImageMat(templateImageArray, templateImageHeight, templateImageWidth);
     
