@@ -24,47 +24,44 @@ cl /EHsc /W4 /Fe<output-name>.exe getAffine.cpp main.cpp /I "<OpenCV-path>\inclu
 
 Usage
 ---------------
-cmd input: <path to input file>
+cmd input: {path to input file}
 
 input file layout:
-<number of templates> <epsilon> <max number of iterations> <path to I image>
-<mode> <depending from mode> <path to T_1 template image>
-<mode> <depending from mode> <path to T_2 template image>
-<mode> <depending from mode> <path to T_3 template image>
-.
-.
-.
-<mode> <depending from mode> <path to T_<number of templates> template image>
-
-<mode> is in {1,2,3}
+{number of templates} {epsilon} {max number of iterations} {path to I image}<br></br>
+{mode} {depending from mode} {path to T_1 template image}<br></br>
+{mode} {depending from mode} {path to T_2 template image}<br></br>
+...<br></br>
+{mode} {depending from mode} {path to T_{number of templates} template image}<br></br>
+<br></br>
+where {mode} is in (1,2,3)<br></br>
 
 if mode = 1:
-approximate starting position of template with least squares method, based on the min(n, <number of found features>) best feature matches
+approximate starting position of template with least squares method, based on the min(n, {number of found features}) best feature matches
 
-1 <n> <path to T_i template image>
+1 {n} {path to T_i template image}
 
 e.g.: 1 8 C:\Users\user\template.png
-
+<br></br>
 
 mode = 2:
 approximate starting position of template with triangulation (cv::getAffineTransform), based on the 3 best feature matches
 
-2 <path to T_i template image>
+2 {path to T_i template image}
 
 e.g.: 2 C:\Users\user\template.png
-
+<br></br>
 
 mode = 3:
 direct initialization of starting position (using the upper 2x3 part of the 3x3 W warp matrix in a row-major order)
 
-3 <a00> <a01> <tx> <a01> <a11> <ty> <path to T_i template image>
+3 {a00} {a01} {tx} {a01} {a11} {ty} {path to T_i template image}
 
 e.g.:
-W = 
-[ 0.93,  0.35, 121.2;
- -0.44,  0.87, 209.3;
-      0,    0,     1 ]
-
+when W = <br></br>
+0.93,  0.35, 121.2;<br></br>
+-0.44,  0.87, 209.3;<br></br>
+0,    0,     1<br></br>
+then <br></br>
 3 0.93 0.35 121.2 -0.44 0.87 209.3 C:\Users\user\template.png
 
 
