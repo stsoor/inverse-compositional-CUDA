@@ -113,6 +113,8 @@ int main( int argc, char** argv )
                         , input.epsilon
                         , input.maxIteration
                         );
+                        
+    std::cout << "[ " << affineParameterEstimates[0] << ",\t" << affineParameterEstimates[1] << ",\t" << affineParameterEstimates[2] << ";" << std::endl << "  " << affineParameterEstimates[3] << ",\t" << affineParameterEstimates[4] << ",\t" << affineParameterEstimates[5] << ";" << std::endl << "  " << 0.0 << ",\t" << 0.0 << ",\t" << 1.0 << " ]" << std::endl;
     
     delete[] imageArray;
     delete[] templateImageArray;

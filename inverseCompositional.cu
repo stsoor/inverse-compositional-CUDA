@@ -24,19 +24,6 @@ cv::Mat buildImageMat(float* intensityArray, const std::size_t height, const std
     return image;
 }
 
-void buildTransformationFromInput(float* W, float* p)
-{
-    W[0 * 3 + 0] = p[0];
-    W[0 * 3 + 1] = p[1];
-    W[0 * 3 + 2] = p[2];
-    W[1 * 3 + 0] = p[3];
-    W[1 * 3 + 1] = p[4];
-    W[1 * 3 + 2] = p[5];
-    W[2 * 3 + 0] = 0.0f;
-    W[2 * 3 + 1] = 0.0f;
-    W[2 * 3 + 2] = 1.0f;
-}
-
 void initWarp(float* W, float* p)
 {
 	W[0 * 3 + 0] = 1.0 + p[0];
@@ -46,10 +33,6 @@ void initWarp(float* W, float* p)
 	W[1 * 3 + 0] = p[1];
 	W[1 * 3 + 1] = 1.0 + p[3];
 	W[1 * 3 + 2] = p[5];
-    
-	W[2 * 3 + 0] = 0.0;
-	W[2 * 3 + 1] = 0.0;
-	W[2 * 3 + 2] = 1.0;
 }
 
 void getWarpInvert(float* W, float* out)
@@ -69,9 +52,6 @@ void getWarpInvert(float* W, float* out)
     out[1 * 3 + 0] = (-p2) / det;
     out[1 * 3 + 1] = 1.0 + (-p4 - p1 * p4 + p2 * p3) / det;
     out[1 * 3 + 2] = (-p6 - p1 * p6 + p2 * p5) / det;
-    out[2 * 3 + 0] = 0.0;
-    out[2 * 3 + 1] = 0.0;
-    out[2 * 3 + 2] = 1.0;
 }
 
 void updateWarp(float* W, float* idW)
@@ -159,7 +139,7 @@ __global__ void getB(
 	// Warp Z=W*X
     float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
                    W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
-                   W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
+                              0 * X[0] +            0 * X[1] +            1 * X[2]
                  };
 
     // pixel coordinates in the coordinate frame of I.
@@ -233,7 +213,7 @@ void displayAlignment(cv::Mat image, float* templateImage, const std::size_t tem
             
             float Z[3] = { W[0 * 3 + 0] * X[0] + W[0 * 3 + 1] * X[1] + W[0 * 3 + 2] * X[2],
                            W[1 * 3 + 0] * X[0] + W[1 * 3 + 1] * X[1] + W[1 * 3 + 2] * X[2],
-                           W[2 * 3 + 0] * X[0] + W[2 * 3 + 1] * X[1] + W[2 * 3 + 2] * X[2]
+                                      0 * X[0] +            0 * X[1] +            1 * X[2]
                          };
             
             float col2 = Z[0];
@@ -287,9 +267,10 @@ void inverseCompositional( float* imageArray
 	cv::Mat gradientX;   // Gradient of I in Y direction.
 
 									// Here we will store matrices.
-	float*   W = new float[3 * 3];  // Current value of warp W(x,p)
-	float*  dW = new float[3 * 3];  // Warp update.
-	float* idW = new float[3 * 3];  // Warp update.
+	float*   W;                     // Current value of warp W(x,p)
+    W = affineParameterEstimates;   // We use the input array directly
+	float*  dW = new float[2 * 3];  // Warp update.
+	float* idW = new float[2 * 3];  // Inverse warp.
 
 	cv::Mat_<float> H(6,6);         // Approximate Hessian. - has to be inverted online
 	float b[6];                     // Vector in the right side of the system of linear equations.
@@ -349,12 +330,10 @@ void inverseCompositional( float* imageArray
 	/*
 	 *   Iteration stage.
 	 */
-     
-    buildTransformationFromInput(W, affineParameterEstimates);
     
     // copy images, estimate to gpu memory
     std::size_t imageArraySize = imageWidth * imageHeight * sizeof(float);
-    std::size_t wArraySize = 3 * 3 * sizeof(float);
+    std::size_t wArraySize = 2 * 3 * sizeof(float);
     std::size_t bArraySize = 6 * 1 * sizeof(float);
   
     float* gpuImage = NULL;
@@ -413,13 +392,11 @@ void inverseCompositional( float* imageArray
     
     std::cout << "Finished in " << iter << " iterations." << std::endl << std::endl;
     
-    std::cout << "[ " << W[0] << ",\t" << W[1] << ",\t" << W[2] << ";" << std::endl << "  " << W[3] << ",\t" << W[4] << ",\t" << W[5] << ";" << std::endl << " " << W[6] << ",\t" << W[7] << ",\t" << W[8] << " ]" << std::endl;
-    
     displayAlignment(image, templateImageArray, templateImageHeight, templateImageWidth, W);
     
-    delete[] W;
     delete[] dW;
     delete[] idW;
+    //for W we use the input array directly
     
     
     cudaFree(gpuB);
