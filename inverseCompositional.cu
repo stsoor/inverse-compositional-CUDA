@@ -7,9 +7,6 @@
 #include <vector>
 
 
-#define HUBER_LOSS 0.80 //Huber loss function parameter, to redunce the influence of outliers
-#define sobelKernelSize 3
-
 cv::Mat buildImageMat(float* intensityArray, const std::size_t height, const std::size_t width)
 {
     cv::Mat_<float> image(static_cast<int>(height), static_cast<int>(width));
@@ -38,7 +35,7 @@ void buildTransformationFromInput(float* W, float* p)
     W[2 * 3 + 2] = 1.0f;
 }
 
-void init_warp(float* W, float* p)
+void initWarp(float* W, float* p)
 {
 	W[0 * 3 + 0] = 1.0 + p[0];
 	W[0 * 3 + 1] = p[2];
@@ -75,7 +72,7 @@ void getWarpInvert(float* W, float* out)
     out[2 * 3 + 2] = 1.0;
 }
 
-void update_warp(float* W, float* idW)
+void updateWarp(float* W, float* idW)
 {
     float  p[6] = {  W[0 * 3 + 0] - 1.0f,   W[1 * 3 + 0],   W[0 * 3 + 1],    W[1 * 3 + 1] - 1.0f,   W[0 * 3 + 2],   W[1 * 3 + 2]};
     float dp[6] = {idW[0 * 3 + 0] - 1.0f, idW[1 * 3 + 0], idW[0 * 3 + 1],  idW[1 * 3 + 1] - 1.0f, idW[0 * 3 + 2], idW[1 * 3 + 2]};
@@ -90,7 +87,7 @@ void update_warp(float* W, float* idW)
         p[5] + dp[5] + p[1] * dp[4] + p[3] * dp[5]
     };
     
-    init_warp(W, newP);
+    initWarp(W, newP);
 }
 
 __host__ __device__ float interpolate(float* image, std::size_t imageHeight, std::size_t imageWidth, float y, float x)
@@ -113,7 +110,7 @@ __host__ __device__ float interpolate(float* image, std::size_t imageHeight, std
   float interpolated_value = 
         (1.0-k1)*(1.0-k2)*px1 +
   (     f1     ? ( k1*(1.0-k2)*px2 ) : 0) +
-  (     f2     ? ( (1.0-k1)*k2*px3 ) : 0) +            
+  (     f2     ? ( (1.0-k1)*k2*px3 ) : 0) + 
   ( (f1 && f2) ? ( k1*k2*px4 ) : 0);
 
   return interpolated_value;
@@ -192,10 +189,40 @@ __global__ void getB(
 	}
 }
 
-void displayAlignment(float* image, const std::size_t imageHeight, const std::size_t imageWidth, float* templateImage, const std::size_t templateImageHeight, const std::size_t templateImageWidth, float* W)
+//gridDim.x = template image height
+//blockDim.x = template image width
+__global__ void precompute(float* gradientX, float* gradientY, float* steepestDescent, float* h)
 {
-    cv::Mat imageMat = buildImageMat(image, imageHeight, imageWidth);
+    int row = blockIdx.x;
+    int col = threadIdx.x;
     
+    int templateImageWidth = blockDim.x;
+    
+    // Evaluate gradient of T.
+    float Tx = gradientX[row * templateImageWidth + col];
+    float Ty = gradientY[row * templateImageWidth + col];
+    
+    // Calculate steepest descent image's element.
+    steepestDescent[6 * (row * templateImageWidth + col) + 0] = Tx * col;
+    steepestDescent[6 * (row * templateImageWidth + col) + 1] = Ty * col;
+    steepestDescent[6 * (row * templateImageWidth + col) + 2] = Tx * row;
+    steepestDescent[6 * (row * templateImageWidth + col) + 3] = Ty * row;
+    steepestDescent[6 * (row * templateImageWidth + col) + 4] = Tx;
+    steepestDescent[6 * (row * templateImageWidth + col) + 5] = Ty;
+    
+    // Add a term to Hessian.
+    for(int i = 0; i < 6; ++i)
+    {
+        for(int j = 0; j < 6; ++j)
+        {
+            atomicAdd(&(h[i * 6 + j]), steepestDescent[6 * (row * templateImageWidth + col) + i] * steepestDescent[6 * (row * templateImageWidth + col) + j]);
+        }
+    }
+}
+
+
+void displayAlignment(cv::Mat image, float* templateImage, const std::size_t templateImageHeight, const std::size_t templateImageWidth, float* W)
+{
     for (int row = 0; row < templateImageHeight; ++row)
 	{
 		for (int col = 0; col < templateImageWidth; ++col)
@@ -213,22 +240,22 @@ void displayAlignment(float* image, const std::size_t imageHeight, const std::si
 			int row2i = int(floor(row2));
 			int col2i = int(floor(col2));
 
-			if (row2i >= 0 && row2i < imageHeight && // check if pixel is inside I.
-				col2i >= 0 && col2i < imageWidth)
+			if (row2i >= 0 && row2i < image.rows && // check if pixel is inside I.
+				col2i >= 0 && col2i < image.cols)
 			{
-                float I2 = interpolate(image, imageHeight, imageWidth, row2, col2);
+                float I2 = interpolate(reinterpret_cast<float*>(image.data), image.rows, image.cols, row2, col2);
 
-				imageMat.at<float>(row2i, col2i) = templateImage[row * templateImageWidth + col];
+				image.at<float>(row2i, col2i) = templateImage[row * templateImageWidth + col];
                 
 				if (row == 0 || col == 0 || col == templateImageWidth - 1 || row == templateImageHeight - 1)
 				{
-					imageMat.at<float>(row2i, col2i) = 1.0f;
+					image.at<float>(row2i, col2i) = 1.0f;
 				}
 			}
 		}
 	}
     
-	cv::imshow("Result", imageMat);
+	cv::imshow("Result", image);
 	cv::waitKey(0);
 }
 
@@ -251,8 +278,8 @@ void inverseCompositional( float* imageArray
 	// Find the 2-D similarity transform that best aligns the two images (uniform scale, rotation and translation)
 	cv::Mat debug;
 
-	cv::Mat template_gradient_row;   // Gradient of I in X direction.
-	cv::Mat template_gradient_col;   // Gradient of I in Y direction.
+	cv::Mat gradientY;   // Gradient of I in X direction.
+	cv::Mat gradientX;   // Gradient of I in Y direction.
 
 									// Here we will store matrices.
 	float*   W = new float[3 * 3];  // Current value of warp W(x,p)
@@ -261,52 +288,59 @@ void inverseCompositional( float* imageArray
 
 	cv::Mat_<float> H(6,6);         // Approximate Hessian. - has to be inverted online
 	float b[6];                     // Vector in the right side of the system of linear equations.
-	float delta_p[6];               // Parameter update value.
+	float deltaP[6];               // Parameter update value.
 
 							  // Create images.
-	template_gradient_row = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
-	template_gradient_col = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
+	gradientY = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
+	gradientX = cv::Mat(templateImageMat.rows, templateImageMat.cols, CV_32FC1);
     
     float* steepestDescent = new float[6 * templateImageHeight * templateImageWidth];
 
 	//The "magic number" appearing at the end in the following is simply the inverse 
 	//of the absolute sum of the weights in the matrix representing the Scharr filter.
-	cv::Scharr(templateImageMat, template_gradient_row, -1, 0, 1, 1.0 / 32.0);
-	cv::Scharr(templateImageMat, template_gradient_col, -1, 1, 0, 1.0 / 32.0);
+	cv::Scharr(templateImageMat, gradientY, -1, 0, 1, 1.0 / 32.0);
+	cv::Scharr(templateImageMat, gradientX, -1, 1, 0, 1.0 / 32.0);
     
-	H = cv::Mat::zeros(6, 6, CV_32FC1);    
-    	
-	// Walk through pixels in the template T.
-	for(int col = 0; col < templateImageWidth; ++col)
-	{
-		for(int row = 0; row < templateImageHeight; ++row)
-		{
-			// Evaluate gradient of T.
-			float Tx = template_gradient_col.at<float>(row, col);	
-			float Ty = template_gradient_row.at<float>(row, col);	
-			
-			// Calculate steepest descent image's element.
-            steepestDescent[6 * (row * templateImageWidth + col) + 0] = Tx * col;
-            steepestDescent[6 * (row * templateImageWidth + col) + 1] = Ty * col;
-            steepestDescent[6 * (row * templateImageWidth + col) + 2] = Tx * row;
-            steepestDescent[6 * (row * templateImageWidth + col) + 3] = Ty * row;
-            steepestDescent[6 * (row * templateImageWidth + col) + 4] = Tx;
-            steepestDescent[6 * (row * templateImageWidth + col) + 5] = Ty;
-            
-			// Add a term to Hessian.
-			for(int i = 0; i < 6; ++i)
-			{
-				for(int j = 0; j < 6; ++j)
-				{
-                    H.at<float>(i, j) += steepestDescent[6 * (row * templateImageWidth + col) + i] * steepestDescent[6 * (row * templateImageWidth + col) + j];
-				}
-			}
-		}
-	}
+    
+    std::size_t templateImageArraySize = templateImageWidth * templateImageHeight * sizeof(float);
+    std::size_t steepestDescentArraySize = 6 * templateImageWidth * templateImageHeight * sizeof(float);
+    std::size_t hArraySize = 6 * 6 * sizeof(float);
+  
+    float* gpuH = NULL;
+    cudaMalloc((void **)&gpuH, hArraySize);
+    float* gpuSteepestDescentImage = NULL;
+    cudaMalloc((void **)&gpuSteepestDescentImage, steepestDescentArraySize);
+    float* gpuGradientX = NULL;
+    cudaMalloc((void **)&gpuGradientX, templateImageArraySize);
+    float* gpuGradientY = NULL;
+    cudaMalloc((void **)&gpuGradientY, templateImageArraySize);
+    
+    float* hArray = new float[6*6];
+    
+    for(int i = 0; i < 6 * 6; ++i)
+    {
+        hArray[i] = 0.0f;
+    }
+    
+    cudaMemcpy(gpuH, hArray, hArraySize, cudaMemcpyHostToDevice);
+    cudaMemcpy(gpuGradientX, reinterpret_cast<float*>(gradientX.data), templateImageArraySize, cudaMemcpyHostToDevice);
+    cudaMemcpy(gpuGradientY, reinterpret_cast<float*>(gradientY.data), templateImageArraySize, cudaMemcpyHostToDevice);
+    
+    precompute<<<templateImageHeight, templateImageWidth>>>(gpuGradientX, gpuGradientY, gpuSteepestDescentImage, gpuH);
+    
+    cudaMemcpy(hArray, gpuH, hArraySize, cudaMemcpyDeviceToHost);
+    
+    H = buildImageMat(hArray, 6, 6);
+    
+    delete[] hArray;
+    
+    cudaFree(gpuH);
+    cudaFree(gpuGradientX);
+    cudaFree(gpuGradientY);
     
     // Invert Hessian.
     cv::Mat iH = H.inv();
-
+    
 	/*
 	 *   Iteration stage.
 	 */
@@ -315,8 +349,6 @@ void inverseCompositional( float* imageArray
     
     // copy images, estimate to gpu memory
     std::size_t imageArraySize = imageWidth * imageHeight * sizeof(float);
-    std::size_t templateImageArraySize = templateImageWidth * templateImageHeight * sizeof(float);
-    std::size_t steepestDescentArraySize = 6 * templateImageWidth * templateImageHeight * sizeof(float);
     std::size_t wArraySize = 3 * 3 * sizeof(float);
     std::size_t bArraySize = 6 * 1 * sizeof(float);
   
@@ -324,8 +356,6 @@ void inverseCompositional( float* imageArray
     cudaMalloc((void **)&gpuImage, imageArraySize);
     float* gpuTemplateImage = NULL;
     cudaMalloc((void **)&gpuTemplateImage, templateImageArraySize);
-    float* gpuSteepestDescentImage = NULL;
-    cudaMalloc((void **)&gpuSteepestDescentImage, steepestDescentArraySize);
     float* gpuW = NULL;
     cudaMalloc((void **)&gpuW, wArraySize);
     float* gpuB = NULL;
@@ -333,7 +363,6 @@ void inverseCompositional( float* imageArray
     
     cudaMemcpy(gpuImage, imageArray, imageArraySize, cudaMemcpyHostToDevice);
     cudaMemcpy(gpuTemplateImage, templateImageArray, templateImageArraySize, cudaMemcpyHostToDevice);
-    cudaMemcpy(gpuSteepestDescentImage, steepestDescent, steepestDescentArraySize, cudaMemcpyHostToDevice);
 
 	// Iterate
 	int iter=0; // number of current iteration
@@ -355,33 +384,33 @@ void inverseCompositional( float* imageArray
         cudaMemcpy(b, gpuB, bArraySize, cudaMemcpyDeviceToHost);
         
 		// Find parameter increment.
-        //delta_p = iH * b;
+        //deltaP = iH * b;
         for(int row = 0; row < 6; ++row)
         {
-            delta_p[row] = 0.0f;
+            deltaP[row] = 0.0f;
             for(int col = 0; col < 6; ++col)
             {
-                delta_p[row] += iH.at<float>(row,col) * b[col];
+                deltaP[row] += iH.at<float>(row,col) * b[col];
             }
         }
 
-		init_warp(dW, delta_p);
+		initWarp(dW, deltaP);
         
 		// Invert warp.
 		getWarpInvert(dW, idW);
         
         //W o idW;
-		update_warp(W, idW);
+		updateWarp(W, idW);
 
 		// Check termination critera.
-		if(norm(delta_p, 6, 1) <= epsilon) break;
+		if(norm(deltaP, 6, 1) <= epsilon) break;
 	}
     
     std::cout << "Finished in " << iter << " iterations." << std::endl << std::endl;
     
     std::cout << "[ " << W[0] << ",\t" << W[1] << ",\t" << W[2] << ";" << std::endl << "  " << W[3] << ",\t" << W[4] << ",\t" << W[5] << ";" << std::endl << " " << W[6] << ",\t" << W[7] << ",\t" << W[8] << " ]" << std::endl;
     
-    displayAlignment(imageArray, imageHeight, imageWidth, templateImageArray, templateImageHeight, templateImageWidth, W);
+    displayAlignment(image, templateImageArray, templateImageHeight, templateImageWidth, W);
     
     delete[] W;
     delete[] dW;

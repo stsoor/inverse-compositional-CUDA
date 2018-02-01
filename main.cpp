@@ -91,6 +91,7 @@ int main( int argc, char** argv )
     //affineParameterEstimates[0] -= 1.0;
     //affineParameterEstimates[3] -= 1.0;
     
+    
     //gpu code
     inverseCompositional( imageArray
                         , templateImageArray
