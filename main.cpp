@@ -88,12 +88,10 @@ int main( int argc, char** argv )
       for(int y = 0; y < affineEstimate.rows; ++y)
         affineParameterEstimates[x * 2 + y] = static_cast<float>(affineEstimate.at<double>(y, x));
     }
-    //affineParameterEstimates[0] -= 1.0;
-    //affineParameterEstimates[3] -= 1.0;
     
     //gpu code
-    inverseCompositional( imageArray
-                        , templateImageArray
+    inverseCompositional( imageArray //TODO instead this could we use image.data?
+                        , templateImageArray //TODO instead this could we use templateImage.data?
                         , affineParameterEstimates
                         , image.rows
                         , image.cols

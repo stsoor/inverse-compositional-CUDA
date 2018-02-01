@@ -38,26 +38,44 @@ void buildTransformation(cv::Mat& W, float* p)
     W.at<float>(2,2) = 1.0f;
 }
 
-
-// Our warp matrix looks like this one:
-//
-//  ! 1  -wz  tx !
-//  ! wz  1   ty !
-//  ! 0   0   1  !
-//
-void init_warp(cv::Mat& W, float wz, float tx, float ty)
+void init_warp(cv::Mat& W, cv::Mat p)
 {
-	W.at<float>(0, 0) = 1;
-	W.at<float>(1, 0) = wz;
-	W.at<float>(2, 0) = 0;
+	W.at<float>(0, 0) = 1.0 + p.at<float>(0,0);
+	W.at<float>(0, 1) = p.at<float>(2,0);
+	W.at<float>(0, 2) = p.at<float>(4,0);
     
-	W.at<float>(0, 1) = -wz;
-	W.at<float>(1, 1) = 1;
-	W.at<float>(2, 1) = 0;
+	W.at<float>(1, 0) = p.at<float>(1,0);
+	W.at<float>(1, 1) = 1.0 + p.at<float>(3,0);
+	W.at<float>(1, 2) = p.at<float>(5,0);
     
-	W.at<float>(0, 2) = tx;
-	W.at<float>(1, 2) = ty;
-	W.at<float>(2, 2) = 1;
+	W.at<float>(2, 0) = 0.0;
+	W.at<float>(2, 1) = 0.0;
+	W.at<float>(2, 2) = 1.0;
+}
+
+void update_warp(cv::Mat& W, cv::Mat idW)
+{
+    cv::Mat p =  (cv::Mat_<float>(6,1) <<   W.at<float>(0,0) - 1.0,   W.at<float>(1,0),   W.at<float>(0,1),   W.at<float>(1,1) - 1.0,   W.at<float>(0,2),   W.at<float>(1,2) );
+    cv::Mat dp = (cv::Mat_<float>(6,1) << idW.at<float>(0,0) - 1.0, idW.at<float>(1,0), idW.at<float>(0,1), idW.at<float>(1,1) - 1.0, idW.at<float>(0,2), idW.at<float>(1,2) );
+    
+    //double det = 1 /((1 + dp[0]) * (1 + dp[3]) − dp[1] * dp[2]);
+    //
+    //if(fabs(det - 0) < 1e8)
+    //{
+    //    std::cout << "Degenerate warp, exiting." << std::endl;
+    //    exit(1);
+    //}
+    
+    cv::Mat_<float>newP(6,1);
+    
+    newP.at<float>(0,0) = p.at<float>(0,0) + dp.at<float>(0,0) + p.at<float>(0,0) * dp.at<float>(0,0) + p.at<float>(2,0) * dp.at<float>(1,0);
+    newP.at<float>(1,0) = p.at<float>(1,0) + dp.at<float>(1,0) + p.at<float>(1,0) * dp.at<float>(0,0) + p.at<float>(3,0) * dp.at<float>(1,0);
+    newP.at<float>(2,0) = p.at<float>(2,0) + dp.at<float>(2,0) + p.at<float>(0,0) * dp.at<float>(2,0) + p.at<float>(2,0) * dp.at<float>(3,0);
+    newP.at<float>(3,0) = p.at<float>(3,0) + dp.at<float>(3,0) + p.at<float>(1,0) * dp.at<float>(2,0) + p.at<float>(3,0) * dp.at<float>(3,0);
+    newP.at<float>(4,0) = p.at<float>(4,0) + dp.at<float>(4,0) + p.at<float>(0,0) * dp.at<float>(4,0) + p.at<float>(2,0) * dp.at<float>(5,0);
+    newP.at<float>(5,0) = p.at<float>(5,0) + dp.at<float>(5,0) + p.at<float>(1,0) * dp.at<float>(4,0) + p.at<float>(3,0) * dp.at<float>(5,0);
+    
+    init_warp(W, newP);
 }
 
 template <class T>
@@ -132,22 +150,22 @@ void inverseCompositional( float* imageArray
 	cv::Mat_<float> X(3,1);         // Point in coordinate frame of source.
 	cv::Mat_<float> Z(3,1);         // Point in coordinate frame of target.
 
-	cv::Mat_<float> H(3,3);         // Approximate Hessian.
-	cv::Mat_<float> b(3,1);         // Vector in the right side of the system of linear equations.
-	cv::Mat_<float> delta_p(3,1);   // Parameter update value.
+	cv::Mat_<float> H(6,6);         // Approximate Hessian.
+	cv::Mat_<float> b(6,1);         // Vector in the right side of the system of linear equations.
+	cv::Mat_<float> delta_p(6,1);   // Parameter update value.
 
 							  // Create images.
 	source_gradient_row = cv::Mat(source.rows, source.cols, CV_32FC1);
 	source_gradient_col = cv::Mat(source.rows, source.cols, CV_32FC1);
     
-    float* steepest_descent = new float[3 * templateImageHeight * templateImageWidth];
+    float* steepest_descent = new float[6 * templateImageHeight * templateImageWidth];
 
 	//The "magic number" appearing at the end in the following is simply the inverse 
 	//of the absolute sum of the weights in the matrix representing the Scharr filter.
 	cv::Scharr(source, source_gradient_row, -1, 0, 1, 1.0 / 32.0);
 	cv::Scharr(source, source_gradient_col, -1, 1, 0, 1.0 / 32.0);
     
-	H = cv::Mat::zeros(3, 3, CV_32FC1);    
+	H = cv::Mat::zeros(6, 6, CV_32FC1);    
     
 	int u, v;	// (u,v) - pixel coordinates in the coordinate frame of T.
 	float u2, v2; // (u2,v2) - pixel coordinates in the coordinate frame of I.
@@ -167,17 +185,20 @@ void inverseCompositional( float* imageArray
 			float Ty = source_gradient_row.at<float>(v, u);	
 			
 			// Calculate steepest descent image's element.
-            steepest_descent[3 * (v * templateImageWidth + u) + 0] = -v*Tx+u*Ty;
-            steepest_descent[3 * (v * templateImageWidth + u) + 1] = Tx;
-            steepest_descent[3 * (v * templateImageWidth + u) + 2] = Ty;
+            steepest_descent[6 * (v * templateImageWidth + u) + 0] = Tx * u;
+            steepest_descent[6 * (v * templateImageWidth + u) + 1] = Ty * u;
+            steepest_descent[6 * (v * templateImageWidth + u) + 2] = Tx * v;
+            steepest_descent[6 * (v * templateImageWidth + u) + 3] = Ty * v;
+            steepest_descent[6 * (v * templateImageWidth + u) + 4] = Tx;
+            steepest_descent[6 * (v * templateImageWidth + u) + 5] = Ty;
             
 			// Add a term to Hessian.
 			int l,m;
-			for(l=0;l<3;l++)
+			for(l=0;l<6;l++)
 			{
-				for(m=0;m<3;m++)
+				for(m=0;m<6;m++)
 				{
-                    H.at<float>(l, m) += steepest_descent[3 * (v * templateImageWidth + u) + l] * steepest_descent[3 * (v * templateImageWidth + u) + m];
+                    H.at<float>(l, m) += steepest_descent[6 * (v * templateImageWidth + u) + l] * steepest_descent[6 * (v * templateImageWidth + u) + m];
 				}
 			}
 		}
@@ -192,11 +213,20 @@ void inverseCompositional( float* imageArray
     
     buildTransformation(W, affineParameterEstimates);
     
-    cv::Mat R = (cv::Mat_<float>(3,3) << sqrt(2.0)/2.0, -sqrt(2.0)/2.0, 0, sqrt(2.0)/2.0, sqrt(2.0)/2.0, 0, 0, 0, 1);
-    W.at<float>(0,2) += 100;
-    W.at<float>(1,2) -= 100;
+    //cv::Mat R = (cv::Mat_<float>(3,3) << sqrt(2.0)/2.0, -sqrt(2.0)/2.0, 0, sqrt(2.0)/2.0, sqrt(2.0)/2.0, 0, 0, 0, 1);
+    //W.at<float>(0,2) += 100;
+    //W.at<float>(1,2) -= 100;
+    
+    cv::Mat R = (cv::Mat_<float>(3,3) << sqrt(3.0)/2, -1.0/2.0, 0, 1.0/2.0, sqrt(3.0)/2.0, 0, 0, 0, 1);
+    W.at<float>(0,2) += 50;
+    W.at<float>(1,2) -= 50;
     
     W = W * R;
+    
+    //W.at<float>(0,0) += 0.03;
+    //W.at<float>(1,1) += 0.06;
+    //W.at<float>(0,2) += 2;
+    //W.at<float>(1,2) -= 3;
     
 
 	// Here we will store current value of mean error.
@@ -214,7 +244,7 @@ void inverseCompositional( float* imageArray
 
 		int pixel_count=0; // Count of processed pixels
 		
-		b = cv::Mat::zeros(3, 1, CV_32FC1); // Set b matrix with zeroes
+		b = cv::Mat::zeros(6, 1, CV_32FC1); // Set b matrix with zeroes
 			
 		// Walk through pixels in the template T.
 		int i, j;
@@ -263,9 +293,12 @@ void inverseCompositional( float* imageArray
 					mean_error += fabs(D);
 
 					// Add a term to b matrix.
-					b.at<float>(0,0) += steepest_descent[3 * (v * templateImageWidth + u) + 0] * D;
-					b.at<float>(1,0) += steepest_descent[3 * (v * templateImageWidth + u) + 1] * D;
-					b.at<float>(2,0) += steepest_descent[3 * (v * templateImageWidth + u) + 2] * D;					
+					b.at<float>(0,0) += steepest_descent[6 * (v * templateImageWidth + u) + 0] * D;
+					b.at<float>(1,0) += steepest_descent[6 * (v * templateImageWidth + u) + 1] * D;
+					b.at<float>(2,0) += steepest_descent[6 * (v * templateImageWidth + u) + 2] * D;	
+					b.at<float>(3,0) += steepest_descent[6 * (v * templateImageWidth + u) + 3] * D;	
+					b.at<float>(4,0) += steepest_descent[6 * (v * templateImageWidth + u) + 4] * D;	
+					b.at<float>(5,0) += steepest_descent[6 * (v * templateImageWidth + u) + 5] * D;					
 				}	
 			}
 		}
@@ -276,17 +309,15 @@ void inverseCompositional( float* imageArray
 
 		// Find parameter increment.
         delta_p = iH * b;
-        
-		float delta_wz = delta_p.at<float>(0, 0);
-		float delta_tx = delta_p.at<float>(1, 0);
-		float delta_ty = delta_p.at<float>(2, 0);
 
-		init_warp(dW, delta_wz, delta_tx, delta_ty);
+		init_warp(dW, delta_p);
 		// Invert warp.
 		idW = dW.inv();
-
-        dW = idW * W;
-        dW.copyTo(W);
+        
+        //W o idW;
+		update_warp(W, idW);
+        
+        //dW.copyTo(W);
 
 		// Print diagnostic information to screen.
 		printf("iter=%d mean_error=%f\n", iter, mean_error);
@@ -295,7 +326,7 @@ void inverseCompositional( float* imageArray
         cv::waitKey(24);
 
 		// Check termination critera.
-		if(fabs(delta_wz)<=epsilon && fabs(delta_tx)<=epsilon && fabs(delta_ty)<=epsilon) break;
+		if(norm(delta_p) <= epsilon) break;
 	}
     
     std::cout << W << std::endl;
